@@ -1,5 +1,4 @@
 require 'httparty'
-require 'nokogiri'
 require 'fedex/helpers'
 require 'fedex/rate'
 
@@ -8,14 +7,16 @@ module Fedex
     class Base
       include Helpers
       include HTTParty
-      format :xml
+      read_timeout 5 # always have timeouts!
       # If true the rate method will return the complete response from the Fedex Web Service
       attr_accessor :debug
       # Fedex Text URL
-      TEST_URL = "https://wsbeta.fedex.com:443/xml/"
+      # TEST_URL = "https://wsbeta.fedex.com:443/xml/"
+      TEST_URL = "https://apis-sandbox.fedex.com"
 
       # Fedex Production URL
-      PRODUCTION_URL = "https://ws.fedex.com:443/xml/"
+      # PRODUCTION_URL = "https://ws.fedex.com:443/xml/"
+      PRODUCTION_URL = "https://apis.fedex.com"
 
       # List of available Service Types
       SERVICE_TYPES = %w(EUROPE_FIRST_INTERNATIONAL_PRIORITY FEDEX_1_DAY_FREIGHT FEDEX_2_DAY FEDEX_2_DAY_AM FEDEX_2_DAY_FREIGHT FEDEX_3_DAY_FREIGHT FEDEX_EXPRESS_SAVER FEDEX_FIRST_FREIGHT FEDEX_FREIGHT_ECONOMY FEDEX_FREIGHT_PRIORITY FEDEX_GROUND FIRST_OVERNIGHT GROUND_HOME_DELIVERY INTERNATIONAL_ECONOMY INTERNATIONAL_ECONOMY_FREIGHT INTERNATIONAL_FIRST INTERNATIONAL_PRIORITY INTERNATIONAL_PRIORITY_FREIGHT PRIORITY_OVERNIGHT SMART_POST STANDARD_OVERNIGHT)
@@ -76,6 +77,24 @@ module Fedex
       end
 
       private
+      # A post to the Fedex to get a bearer token .  In this example
+      # See here for more information https://developer.fedex.com/api/en-cn/catalog/authorization/v1/docs.html
+      #
+      def bearer_token
+        response = HTTParty.post(
+          "#{api_url}/#{'oauth/token'}",
+          body: {
+            client_id: @credentials.client_id,
+            client_secret: @credentials.client_secret,
+            grant_type: 'client_credentials'
+          }
+        )
+
+        return false unless response.code == 200
+
+        JSON.parse(response.body)['access_token']
+      end
+
       # Add web authentication detail information(key and password) to xml request
       def add_web_authentication_detail(xml)
         xml.WebAuthenticationDetail{
