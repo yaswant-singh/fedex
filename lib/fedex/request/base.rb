@@ -77,22 +77,30 @@ module Fedex
       end
 
       private
+
+      def token_body
+        {
+          client_id: @credentials.client_id,
+          client_secret: @credentials.client_secret,
+          grant_type: 'client_credentials'
+        }
+      end
+
       # A post to the Fedex to get a bearer token .  In this example
       # See here for more information https://developer.fedex.com/api/en-cn/catalog/authorization/v1/docs.html
       #
       def bearer_token
-        response = HTTParty.post(
-          "#{api_url}/#{'oauth/token'}",
-          body: {
-            client_id: @credentials.client_id,
-            client_secret: @credentials.client_secret,
-            grant_type: 'client_credentials'
-          }
-        )
-
-        return false unless response.code == 200
-
-        JSON.parse(response.body)['access_token']
+        begin
+          response = HTTParty.post("#{api_url}/#{'oauth/token'}", body: token_body)
+          case response.code
+          when 200
+            JSON.parse(response.body)['access_token']
+          else
+            false
+          end
+        rescue HTTParty::Error, SocketError, Timeout::Error => e
+          false
+        end
       end
 
       # Add web authentication detail information(key and password) to xml request
