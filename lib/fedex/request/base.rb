@@ -103,6 +103,19 @@ module Fedex
         end
       end
 
+      def get_cached_bearer_token
+        token = Rails.cache.read("fedex-bearer-token")
+        if token.nil?
+          token = bearer_token
+          create_bearer_token_cached(token) if token
+        end
+        token
+      end
+
+      def create_bearer_token_cached(token)
+        Rails.cache.write("fedex-bearer-token", token, expires_in: 45.minutes)
+      end
+
       # Add web authentication detail information(key and password) to xml request
       def add_web_authentication_detail(xml)
         xml.WebAuthenticationDetail{
