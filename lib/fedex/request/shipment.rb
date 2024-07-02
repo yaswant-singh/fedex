@@ -30,11 +30,15 @@ module Fedex
         }
         api_response = self.class.post 'https://apis-sandbox.fedex.com/ship/v1/shipments', :headers => headers, :body => build_body.to_json
         puts api_response if @debug
-        # response = JSON.parse(api_response)
+        api_response = begin 
+                        JSON.parse(api_response)
+                       rescue
+                        api_response
+                       end
         if success?(api_response)
           success_response(api_response, api_response)
         else
-          failure_response(api_response, response)
+          failure_response(api_response, api_response)
         end
       end
 
@@ -204,12 +208,10 @@ module Fedex
 
       # Callback used after a failed shipment response.
       def failure_response(api_response, response)
-        error_message = if response[:process_shipment_reply]
-          [response[:process_shipment_reply][:notifications]].flatten.first[:message]
-        else
-          "#{api_response["Fault"]["detail"]["fault"]["reason"]}\n--#{api_response["Fault"]["detail"]["fault"]["details"]["ValidationFailureDetail"]["message"].join("\n--")}"
-        end rescue $1
-        raise RateError, error_message
+        error_message = if response["errors"]
+          [response["errors"][0]["message"]]
+          raise ShipLabelError, error_message
+        end
       end
 
       # Callback used after a successful shipment response.
@@ -240,7 +242,7 @@ module Fedex
       def success?(response)
         # response[:process_shipment_reply] &&
         #   %w{SUCCESS WARNING NOTE}.include?(response[:process_shipment_reply][:highest_severity])
-        true if response["output"].present? && response["output"]["transactionShipments"].present?
+        response["output"].present? && response["output"]["transactionShipments"].present? && response["errors"].nil?
       end
 
     end
