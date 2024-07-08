@@ -119,71 +119,8 @@ module Fedex
         Rails.cache.write("fedex-ship-bearer-token", token, expires_in: 45.minutes)
       end
 
-      # Add web authentication detail information(key and password) to xml request
-      # def add_web_authentication_detail(xml)
-      #   xml.WebAuthenticationDetail{
-      #     xml.UserCredential{
-      #       xml.Key @credentials.key
-      #       xml.Password @credentials.password
-      #     }
-      #   }
-      # end
-
-      # Add Client Detail information(account_number and meter_number) to xml request
-      # def add_client_detail(xml)
-      #   xml.ClientDetail{
-      #     xml.AccountNumber @credentials.account_number
-      #     xml.MeterNumber @credentials.meter
-      #     xml.Localization{
-      #       xml.LanguageCode 'en' # English
-      #       xml.LocaleCode   'us' # United States
-      #     }
-      #   }
-      # end
-
-      # Add Version to xml request, using the version identified in the subclass
-      # def add_version(xml)
-      #   xml.Version{
-      #     xml.ServiceId service[:id]
-      #     xml.Major     service[:version]
-      #     xml.Intermediate 0
-      #     xml.Minor 0
-      #   }
-      # end
-
-      # Add information for shipments
-      # def add_requested_shipment(xml)
-      #   xml.RequestedShipment{
-      #     xml.DropoffType @shipping_options[:drop_off_type] ||= "USE_SCHEDULED_PICKUP"
-      #     xml.ServiceType service_type
-      #     xml.PackagingType @shipping_options[:packaging_type] ||= "YOUR_PACKAGING"
-      #     add_shipper
-      #     add_recipient
-      #     add_shipping_charges_payment(xml)
-      #     add_customs_clearance(xml) if @customs_clearance_detail
-      #     xml.RateRequestTypes "ACCOUNT"
-      #     add_packages(xml)
-      #   }
-      # end
-
       # Add shipper to xml request
       def add_shipper
-        # xml.Shipper{
-        #   xml.Contact{
-        #     xml.PersonName @shipper[:name]
-        #     xml.CompanyName @shipper[:company]
-        #     xml.PhoneNumber @shipper[:phone_number]
-        #   }
-        #   xml.Address {
-        #     Array(@shipper[:address]).take(2).each do |address_line|
-        #       xml.StreetLines address_line
-        #     end
-        #     xml.City @shipper[:city]
-        #     xml.StateOrProvinceCode @shipper[:state]
-        #     xml.PostalCode @shipper[:postal_code]
-        #     xml.CountryCode @shipper[:country_code]
-        #   }
-        # }
         {
           "address": {
             "streetLines": address_lines(Array(@shipper[:address])).compact,
@@ -209,22 +146,6 @@ module Fedex
 
       # Add shipper to xml request
       def add_origin
-        # xml.Origin{
-        #   xml.Contact{
-        #     xml.PersonName @origin[:name]
-        #     xml.CompanyName @origin[:company]
-        #     xml.PhoneNumber @origin[:phone_number]
-        #   }
-        #   xml.Address {
-        #     Array(@origin[:address]).take(2).each do |address_line|
-        #       xml.StreetLines address_line
-        #     end
-        #     xml.City @origin[:city]
-        #     xml.StateOrProvinceCode @origin[:state]
-        #     xml.PostalCode @origin[:postal_code]
-        #     xml.CountryCode @origin[:country_code]
-        #   }
-        # }
         if @origin
           {
             "address": {
@@ -246,24 +167,6 @@ module Fedex
 
       # Add recipient to xml request
       def add_recipient
-        # xml.Recipient{
-        #   xml.Contact{
-        #     xml.PersonName @recipient[:name]
-        #     xml.CompanyName @recipient[:company]
-        #     xml.PhoneNumber @recipient[:phone_number]
-        #   }
-        #   xml.Address {
-        #     Array(@recipient[:address]).take(2).each do |address_line|
-        #       xml.StreetLines address_line
-        #     end
-        #     xml.City @recipient[:city]
-        #     xml.StateOrProvinceCode @recipient[:state]
-        #     xml.PostalCode @recipient[:postal_code]
-        #     xml.CountryCode @recipient[:country_code]
-        #     xml.Residential @recipient[:residential]
-        #   }
-        # }
-        
         [
           {
             "address": {
@@ -286,25 +189,6 @@ module Fedex
 
       # Add shipping charges to xml request
       def add_shipping_charges_payment
-        # xml.ShippingChargesPayment{
-        #   xml.PaymentType @payment_options[:type] || "SENDER"
-        #   xml.Payor{
-        #     if service[:version].to_i >= Fedex::API_VERSION.to_i
-        #       xml.ResponsibleParty {
-        #         xml.AccountNumber @payment_options[:account_number] || @credentials.account_number
-        #         xml.Contact {
-        #           xml.PersonName @payment_options[:name] || @shipper[:name]
-        #           xml.CompanyName @payment_options[:company] || @shipper[:company]
-        #           xml.PhoneNumber @payment_options[:phone_number] || @shipper[:phone_number]
-        #         }
-        #       }
-        #     else
-        #       xml.AccountNumber @payment_options[:account_number] || @credentials.account_number
-        #       xml.CountryCode @payment_options[:country_code] || @shipper[:country_code]
-        #     end
-        #   }
-        # }
-
         {
           "paymentType": @payment_options[:type] || "SENDER",
           "payor": add_payor
@@ -338,10 +222,6 @@ module Fedex
       # Add Master Tracking Id (for MPS Shipping Labels, this is required when requesting labels 2 through n)
       def add_master_tracking_id
         if @mps.has_key? :master_tracking_id
-          # xml.MasterTrackingId{
-          #   xml.TrackingIdType @mps[:master_tracking_id][:tracking_id_type]
-          #   xml.TrackingNumber @mps[:master_tracking_id][:tracking_number]
-          # }
           {
             "trackingIdType" => @mps[:master_tracking_id][:tracking_id_type],
             "trackingNumber" => @mps[:master_tracking_id][:tracking_number]
@@ -354,20 +234,16 @@ module Fedex
         request_body = JSON.parse(request_body.to_json)
         package_count = @packages.size
         if @mps.has_key? :package_count
-          # xml.PackageCount @mps[:package_count]
           request_body["requestedShipment"]["totalPackageCount"] = @mps[:package_count]
         else
-          # xml.PackageCount package_count
           request_body["requestedShipment"]["totalPackageCount"] = package_count
         end
         request_body["requestedShipment"]["requestedPackageLineItems"] = []
         @packages.each do |package|
           new_object = {}
           if @mps.has_key? :sequence_number
-            # xml.SequenceNumber @mps[:sequence_number]
             new_object["sequenceNumber"] = @mps[:sequence_number]
           else
-            # xml.GroupPackageCount 1
             new_object = {"groupPackageCount" => 1}
           end
           if package[:insured_value]
@@ -376,19 +252,8 @@ module Fedex
             #   xml.Amount package[:insured_value][:amount]
             # }
           end
-          # xml.Weight{
-          #   xml.Units package[:weight][:units]
-          #   xml.Value package[:weight][:value]
-          # }
           new_object["weight"] = {"units" => package[:weight][:units], "value" => package[:weight][:value]}
-          # new_object["weight"]["value"] = package[:weight][:value]
           if package[:dimensions]
-            # xml.Dimensions{
-            #   xml.Length package[:dimensions][:length]
-            #   xml.Width package[:dimensions][:width]
-            #   xml.Height package[:dimensions][:height]
-            #   xml.Units package[:dimensions][:units]
-            # }
             new_object["dimensions"] = {
               "length" => package[:dimensions][:length],
               "width" => package[:dimensions][:width],
@@ -400,9 +265,6 @@ module Fedex
           if package[:special_services_requested]
             if package[:special_services_requested][:special_service_types]
               if package[:special_services_requested][:special_service_types].is_a? Array
-                # package[:special_services_requested][:special_service_types].each do |type|
-                #   xml.SpecialServiceTypes type
-                # end
                 new_object["packageSpecialServices"] = {"specialServiceTypes" => package[:special_services_requested][:special_service_types]}
               else
                 new_object["packageSpecialServices"] = {"specialServiceTypes" => [package[:special_services_requested][:special_service_types]]}
@@ -410,10 +272,6 @@ module Fedex
             end
             # Handle COD Options
             if package[:special_services_requested][:cod_detail]
-              # xml.CodCollectionAmount{
-              #   xml.Currency package[:special_services_requested][:cod_detail][:cod_collection_amount][:currency]
-              #   xml.Amount package[:special_services_requested][:cod_detail][:cod_collection_amount][:amount]
-              # }
               new_object["packageSpecialServices"]["packageCODDetail"] = {"codCollectionAmount" => {
                   "amount" => package[:special_services_requested][:cod_detail][:cod_collection_amount][:amount],
                   "currency" => package[:special_services_requested][:cod_detail][:cod_collection_amount][:currency]
@@ -432,19 +290,12 @@ module Fedex
             end
             # DangerousGoodsDetail goes here
             if package[:special_services_requested][:dry_ice_weight]
-              # xml.DryIceWeight{
-              #   xml.Units package[:special_services_requested][:dry_ice_weight][:units]
-              #   xml.Value package[:special_services_requested][:dry_ice_weight][:value]
-              # }
               new_object["packageSpecialServices"]["dryIceWeight"] = {
                 "units" => package[:special_services_requested][:dry_ice_weight][:units],
                 "value" => package[:special_services_requested][:dry_ice_weight][:value]
               }
             end
             if package[:special_services_requested][:signature_option_detail]
-              # xml.SignatureOptionDetail{
-              #   xml.OptionType package[:special_services_requested][:signature_option_detail][:signature_option_type]
-              # }
               new_object["packageSpecialServices"]["signatureOptionType"] = package[:special_services_requested][:signature_option_detail][:signature_option_type]
             end
             if package[:special_services_requested][:priority_alert_detail]
@@ -467,13 +318,8 @@ module Fedex
               # ELECTRONIC_PRODUCT_CODE, INTRACOUNTRY_REGULATORY_REFERENCE,
               # INVOICE_NUMBER, P_O_NUMBER, RMA_ASSOCIATION,
               # SHIPMENT_INTEGRITY, STORE_NUMBER
-              # xml.CustomerReferenceType ref[:type]
-              # xml.Value                 ref[:value]
               package_body["customerReferences"] = [{"customerReferenceType" => ref[:type], "value" => ref[:value]}]
-              # package_body["customerReferences"]["value"] = ref[:value]
             else
-              # package_body["customerReferences"]["customerReferenceType"] = 'CUSTOMER_REFERENCE'
-              # package_body["customerReferences"]["value"] = ref
               package_body["customerReferences"] = [{"customerReferenceType" => 'CUSTOMER_REFERENCE', "value" => ref}]
             end
           end
