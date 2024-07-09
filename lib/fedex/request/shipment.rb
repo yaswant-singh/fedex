@@ -28,13 +28,8 @@ module Fedex
           "Content-Type": "application/json",
           "authorization": "bearer #{get_cached_bearer_token}"
         }
-        api_response = self.class.post 'https://apis-sandbox.fedex.com/ship/v1/shipments', :headers => headers, :body => build_body.to_json
+        api_response = self.class.post "#{api_url}/ship/v1/shipments", :headers => headers, :body => build_body.to_json
         puts api_response if @debug
-        api_response = begin 
-                        JSON.parse(api_response)
-                       rescue
-                        api_response
-                       end
         if success?(api_response)
           success_response(api_response, api_response)
         else
