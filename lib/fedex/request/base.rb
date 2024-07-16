@@ -26,7 +26,7 @@ module Fedex
       PACKAGING_TYPES = %w(FEDEX_10KG_BOX FEDEX_25KG_BOX FEDEX_BOX FEDEX_ENVELOPE FEDEX_PAK FEDEX_TUBE YOUR_PACKAGING)
 
       # List of available DropOffTypes
-      DROP_OFF_TYPES = %w(BUSINESS_SERVICE_CENTER DROP_BOX USE_SCHEDULED_PICKUP REQUEST_COURIER STATION)
+      DROP_OFF_TYPES = %w(BUSINESS_SERVICE_CENTER DROP_BOX USE_SCHEDULED_PICKUP REQUEST_COURIER STATION REGULAR_PICKUP CONTACT_FEDEX_TO_SCHEDULE DROPOFF_AT_FEDEX_LOCATION)
 
       # Clearance Brokerage Type
       CLEARANCE_BROKERAGE_TYPE = %w(BROKER_INCLUSIVE BROKER_INCLUSIVE_NON_RESIDENT_IMPORTER BROKER_SELECT BROKER_SELECT_NON_RESIDENT_IMPORTER BROKER_UNASSIGNED)
@@ -83,7 +83,7 @@ module Fedex
         {
           client_id: @credentials.client_id,
           client_secret: @credentials.client_secret,
-          grant_type: 'client_credentials'
+          grant_type: @credentials.grant_type
         }
       end
 
@@ -202,7 +202,6 @@ module Fedex
               "contact": {
                 "personName": @payment_options[:name] || @shipper[:name],
                 "phoneNumber": @payment_options[:phone_number] || @shipper[:phone_number],
-                "phoneExtension": "+91",
                 "companyName": @payment_options[:company] || @shipper[:company]
               },
               "accountNumber": {
@@ -300,6 +299,10 @@ module Fedex
             end
             if package[:special_services_requested][:priority_alert_detail]
               # xml.PriorityAlertDetail package[:special_services_requested][:priority_alert_detail]
+              new_object["packageSpecialServices"]["priorityAlertDetail"] = {
+                "enhancementTypes": [ package[:special_services_requested][:priority_alert_detail] ],
+                "content": [ "string" ]
+              }
             end
           end
           request_body["requestedShipment"]["requestedPackageLineItems"] << new_object
