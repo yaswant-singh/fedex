@@ -106,7 +106,7 @@ module Fedex
       def add_customer_specific_details
         @customer_specified_detail if @customer_specified_detail
       end
-
+      # For commented nodes I have checked and compared those nodes in old and new document and didn't find any relatable node. So, I kept them commented. These do not have any impact on our integration as we are not having any relation  with these nodes in our application.
       def add_special_services
         #   if @shipping_options[:saturday_delivery]
         #     xml.SpecialServiceTypes "SATURDAY_DELIVERY"

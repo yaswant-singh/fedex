@@ -245,6 +245,8 @@ module Fedex
           else
             new_object = {"groupPackageCount" => 1}
           end
+
+          # For commented nodes I have checked and compared those nodes in old and new document and didn't find any relatable node. So, I kept them commented. These do not have any impact on our integration as we are not having any relation  with these nodes in our application.
           if package[:insured_value]
             # xml.InsuredValue{
             #   xml.Currency package[:insured_value][:currency]
@@ -276,6 +278,7 @@ module Fedex
                   "currency" => package[:special_services_requested][:cod_detail][:cod_collection_amount][:currency]
                 }
               }
+              # For commented nodes I have checked and compared those nodes in old and new document and didn't find any relatable node. So, I kept them commented. These do not have any impact on our integration as we are not having any relation  with these nodes in our application.
               if package[:special_services_requested][:cod_detail][:add_transportation_charges]
                 # xml.AddTransportationCharges package[:special_services_requested][:cod_detail][:add_transportation_charges]
               end
