@@ -13,14 +13,14 @@ module Fedex
         @options = package_details[:label]
         @options[:tracking_number] = package_details[:tracking_id]
       else
-        @response_details = label_details[:process_shipment_reply]
-        package_details = label_details[:process_shipment_reply][:completed_shipment_detail][:completed_package_details]
-        @options = package_details[:label]
-        @options[:tracking_number] = package_details[:tracking_ids][:tracking_number]
+        @response_details = label_details["output"]["transactionShipments"][0]
+        package_details = @response_details.dig("completedShipmentDetail", "completedPackageDetails")[0]
+        @options = @response_details.dig("pieceResponses")[0].dig("packageDocuments")[0]
+        @options[:tracking_number] = package_details["trackingIds"][0]["trackingNumber"]
       end
       @options[:format] = label_details[:format]
       @options[:file_name] = label_details[:file_name]
-      @image = Base64.decode64(options[:parts][:image]) if has_image?
+      @image = Base64.decode64(options["encodedLabel"]) if has_image?
 
       if file_name = @options[:file_name]
         save(file_name, false)
@@ -44,7 +44,7 @@ module Fedex
     end
 
     def has_image?
-      options[:parts] && options[:parts][:image]
+      options["encodedLabel"]
     end
 
     def save(path, append_name = true)
@@ -59,13 +59,14 @@ module Fedex
     end
 
     def associated_shipments
-      if (label_details = @response_details[:completed_shipment_detail][:associated_shipments])
-        label_details[:format] = format
-        label_details[:file_name] = file_name
-        Label.new(label_details, true)
-      else
-        nil
-      end
+      # if (label_details = @response_details[:completed_shipment_detail][:associated_shipments])
+      #   label_details[:format] = format
+      #   label_details[:file_name] = file_name
+      #   Label.new(label_details, true)
+      # else
+      #   nil
+      # end
+      nil
     end
   end
 end

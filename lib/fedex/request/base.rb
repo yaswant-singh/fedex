@@ -8,14 +8,16 @@ module Fedex
     class Base
       include Helpers
       include HTTParty
-      format :xml
+      read_timeout 5 # always have timeouts!
       # If true the rate method will return the complete response from the Fedex Web Service
       attr_accessor :debug
       # Fedex Text URL
-      TEST_URL = "https://wsbeta.fedex.com:443/xml/"
+      # TEST_URL = "https://wsbeta.fedex.com:443/xml/"
+      TEST_URL = "https://apis-sandbox.fedex.com"
 
       # Fedex Production URL
-      PRODUCTION_URL = "https://ws.fedex.com:443/xml/"
+      # PRODUCTION_URL = "https://ws.fedex.com:443/xml/"
+      PRODUCTION_URL = "https://apis.fedex.com"
 
       # List of available Service Types
       SERVICE_TYPES = %w(EUROPE_FIRST_INTERNATIONAL_PRIORITY FEDEX_1_DAY_FREIGHT FEDEX_2_DAY FEDEX_2_DAY_AM FEDEX_2_DAY_FREIGHT FEDEX_3_DAY_FREIGHT FEDEX_EXPRESS_SAVER FEDEX_FIRST_FREIGHT FEDEX_FREIGHT_ECONOMY FEDEX_FREIGHT_PRIORITY FEDEX_GROUND FIRST_OVERNIGHT GROUND_HOME_DELIVERY INTERNATIONAL_ECONOMY INTERNATIONAL_ECONOMY_FREIGHT INTERNATIONAL_FIRST INTERNATIONAL_PRIORITY INTERNATIONAL_PRIORITY_FREIGHT PRIORITY_OVERNIGHT SMART_POST STANDARD_OVERNIGHT)
@@ -24,7 +26,7 @@ module Fedex
       PACKAGING_TYPES = %w(FEDEX_10KG_BOX FEDEX_25KG_BOX FEDEX_BOX FEDEX_ENVELOPE FEDEX_PAK FEDEX_TUBE YOUR_PACKAGING)
 
       # List of available DropOffTypes
-      DROP_OFF_TYPES = %w(BUSINESS_SERVICE_CENTER DROP_BOX REGULAR_PICKUP REQUEST_COURIER STATION)
+      DROP_OFF_TYPES = %w(BUSINESS_SERVICE_CENTER DROP_BOX USE_SCHEDULED_PICKUP REQUEST_COURIER STATION REGULAR_PICKUP CONTACT_FEDEX_TO_SCHEDULE DROPOFF_AT_FEDEX_LOCATION)
 
       # Clearance Brokerage Type
       CLEARANCE_BROKERAGE_TYPE = %w(BROKER_INCLUSIVE BROKER_INCLUSIVE_NON_RESIDENT_IMPORTER BROKER_SELECT BROKER_SELECT_NON_RESIDENT_IMPORTER BROKER_UNASSIGNED)
@@ -76,260 +78,267 @@ module Fedex
       end
 
       private
-      # Add web authentication detail information(key and password) to xml request
-      def add_web_authentication_detail(xml)
-        xml.WebAuthenticationDetail{
-          xml.UserCredential{
-            xml.Key @credentials.key
-            xml.Password @credentials.password
-          }
+
+      def token_body
+        {
+          client_id: @credentials.client_id,
+          client_secret: @credentials.client_secret,
+          grant_type: @credentials.grant_type
         }
       end
 
-      # Add Client Detail information(account_number and meter_number) to xml request
-      def add_client_detail(xml)
-        xml.ClientDetail{
-          xml.AccountNumber @credentials.account_number
-          xml.MeterNumber @credentials.meter
-          xml.Localization{
-            xml.LanguageCode 'en' # English
-            xml.LocaleCode   'us' # United States
-          }
-        }
+      # A post to the Fedex to get a bearer token .  In this example
+      # See here for more information https://developer.fedex.com/api/en-cn/catalog/authorization/v1/docs.html
+      #
+      def bearer_token
+        begin
+          response = HTTParty.post("#{api_url}/oauth/token", body: token_body)
+          case response.code
+          when 200
+            JSON.parse(response.body)['access_token']
+          else
+            Rails.logger.error(response["errors"][0]["message"])
+            raise Exception.new(response["errors"][0]["message"])
+          end
+        rescue HTTParty::Error, SocketError, Timeout::Error => e
+          false
+        end
       end
 
-      # Add Version to xml request, using the version identified in the subclass
-      def add_version(xml)
-        xml.Version{
-          xml.ServiceId service[:id]
-          xml.Major     service[:version]
-          xml.Intermediate 0
-          xml.Minor 0
-        }
+      def get_cached_bearer_token
+        test_mode = @credentials.mode == "development"
+        token = Rails.cache.read("fedex-ship-bearer-token") if !test_mode
+        if token.nil?
+          token = bearer_token
+          create_bearer_token_cached(token) if token && !test_mode
+        end
+        token
       end
 
-      # Add information for shipments
-      def add_requested_shipment(xml)
-        xml.RequestedShipment{
-          xml.DropoffType @shipping_options[:drop_off_type] ||= "REGULAR_PICKUP"
-          xml.ServiceType service_type
-          xml.PackagingType @shipping_options[:packaging_type] ||= "YOUR_PACKAGING"
-          add_shipper(xml)
-          add_recipient(xml)
-          add_shipping_charges_payment(xml)
-          add_customs_clearance(xml) if @customs_clearance_detail
-          xml.RateRequestTypes "ACCOUNT"
-          add_packages(xml)
-        }
+      def create_bearer_token_cached(token)
+        Rails.cache.write("fedex-ship-bearer-token", token, expires_in: 45.minutes)
       end
 
       # Add shipper to xml request
-      def add_shipper(xml)
-        xml.Shipper{
-          xml.Contact{
-            xml.PersonName @shipper[:name]
-            xml.CompanyName @shipper[:company]
-            xml.PhoneNumber @shipper[:phone_number]
-          }
-          xml.Address {
-            Array(@shipper[:address]).take(2).each do |address_line|
-              xml.StreetLines address_line
-            end
-            xml.City @shipper[:city]
-            xml.StateOrProvinceCode @shipper[:state]
-            xml.PostalCode @shipper[:postal_code]
-            xml.CountryCode @shipper[:country_code]
+      def add_shipper
+        {
+          "address": {
+            "streetLines": address_lines(Array(@shipper[:address])).compact,
+            "city": @shipper[:city],
+            "stateOrProvinceCode": @shipper[:state],
+            "postalCode": @shipper[:postal_code],
+            "countryCode": @shipper[:country_code],
+            "residential": false
+          },
+          "contact": {
+            "personName": @shipper[:name],
+            "phoneNumber": @shipper[:phone_number],
+            "companyName": @shipper[:company]
           }
         }
+
       end
 
+      def address_lines(arr)
+        arr.take(2).map{|address_line| address_line}
+      end
+
+
       # Add shipper to xml request
-      def add_origin(xml)
-        xml.Origin{
-          xml.Contact{
-            xml.PersonName @origin[:name]
-            xml.CompanyName @origin[:company]
-            xml.PhoneNumber @origin[:phone_number]
+      def add_origin
+        if @origin
+          {
+            "address": {
+              "streetLines": address_lines(Array(@origin[:address])),
+              "city": @origin[:city],
+              "stateOrProvinceCode": @origin[:state],
+              "postalCode": @origin[:postal_code],
+              "countryCode": @origin[:country_code],
+              "residential": false
+            },
+            "contact": {
+              "personName": @origin[:name],
+              "phoneNumber": @origin[:phone_number],
+              "companyName": @origin[:company]
+            }
           }
-          xml.Address {
-            Array(@origin[:address]).take(2).each do |address_line|
-              xml.StreetLines address_line
-            end
-            xml.City @origin[:city]
-            xml.StateOrProvinceCode @origin[:state]
-            xml.PostalCode @origin[:postal_code]
-            xml.CountryCode @origin[:country_code]
-          }
-        }
+        end
       end
 
       # Add recipient to xml request
-      def add_recipient(xml)
-        xml.Recipient{
-          xml.Contact{
-            xml.PersonName @recipient[:name]
-            xml.CompanyName @recipient[:company]
-            xml.PhoneNumber @recipient[:phone_number]
+      def add_recipient
+        [
+          {
+            "address": {
+              "streetLines": address_lines(Array(@recipient[:address])),
+              "city": @recipient[:city],
+              "stateOrProvinceCode": @recipient[:state],
+              "postalCode": @recipient[:postal_code],
+              "countryCode": @recipient[:country_code],
+              "residential": false
+            },
+            "contact": {
+              "personName": @recipient[:name],
+              "phoneNumber": @recipient[:phone_number],
+              "companyName": @recipient[:company]
+            }
           }
-          xml.Address {
-            Array(@recipient[:address]).take(2).each do |address_line|
-              xml.StreetLines address_line
-            end
-            xml.City @recipient[:city]
-            xml.StateOrProvinceCode @recipient[:state]
-            xml.PostalCode @recipient[:postal_code]
-            xml.CountryCode @recipient[:country_code]
-            xml.Residential @recipient[:residential]
-          }
-        }
+        ]
+
       end
 
       # Add shipping charges to xml request
-      def add_shipping_charges_payment(xml)
-        xml.ShippingChargesPayment{
-          xml.PaymentType @payment_options[:type] || "SENDER"
-          xml.Payor{
-            if service[:version].to_i >= Fedex::API_VERSION.to_i
-              xml.ResponsibleParty {
-                xml.AccountNumber @payment_options[:account_number] || @credentials.account_number
-                xml.Contact {
-                  xml.PersonName @payment_options[:name] || @shipper[:name]
-                  xml.CompanyName @payment_options[:company] || @shipper[:company]
-                  xml.PhoneNumber @payment_options[:phone_number] || @shipper[:phone_number]
-                }
-              }
-            else
-              xml.AccountNumber @payment_options[:account_number] || @credentials.account_number
-              xml.CountryCode @payment_options[:country_code] || @shipper[:country_code]
-            end
-          }
+      def add_shipping_charges_payment
+        {
+          "paymentType": @payment_options[:type] || "SENDER",
+          "payor": add_payor
         }
       end
 
+      def add_payor
+        if service[:version].to_i >= Fedex::API_VERSION.to_i
+          {
+            "responsibleParty": {
+              "contact": {
+                "personName": @payment_options[:name] || @shipper[:name],
+                "phoneNumber": @payment_options[:phone_number] || @shipper[:phone_number],
+                "companyName": @payment_options[:company] || @shipper[:company]
+              },
+              "accountNumber": {
+                "value": @payment_options[:account_number] || @credentials.account_number
+              }
+            }
+          }
+        else
+          {
+            "accountNumber": {
+              "value": @payment_options[:account_number] || @credentials.account_number
+            }
+          }
+        end
+      end
+
       # Add Master Tracking Id (for MPS Shipping Labels, this is required when requesting labels 2 through n)
-      def add_master_tracking_id(xml)
+      def add_master_tracking_id
         if @mps.has_key? :master_tracking_id
-          xml.MasterTrackingId{
-            xml.TrackingIdType @mps[:master_tracking_id][:tracking_id_type]
-            xml.TrackingNumber @mps[:master_tracking_id][:tracking_number]
+          {
+            "trackingIdType" => @mps[:master_tracking_id][:tracking_id_type],
+            "trackingNumber" => @mps[:master_tracking_id][:tracking_number]
           }
         end
       end
 
       # Add packages to xml request
-      def add_packages(xml)
-        add_master_tracking_id(xml) if @mps.has_key? :master_tracking_id
+      def add_packages(request_body)
+        request_body = JSON.parse(request_body.to_json)
         package_count = @packages.size
         if @mps.has_key? :package_count
-          xml.PackageCount @mps[:package_count]
+          request_body["requestedShipment"]["totalPackageCount"] = @mps[:package_count]
         else
-          xml.PackageCount package_count
+          request_body["requestedShipment"]["totalPackageCount"] = package_count
         end
+        request_body["requestedShipment"]["requestedPackageLineItems"] = []
         @packages.each do |package|
-          xml.RequestedPackageLineItems{
-            if @mps.has_key? :sequence_number
-              xml.SequenceNumber @mps[:sequence_number]
-            else
-              xml.GroupPackageCount 1
-            end
-            if package[:insured_value]
-              xml.InsuredValue{
-                xml.Currency package[:insured_value][:currency]
-                xml.Amount package[:insured_value][:amount]
-              }
-            end
-            xml.Weight{
-              xml.Units package[:weight][:units]
-              xml.Value package[:weight][:value]
+          new_object = {}
+          if @mps.has_key? :sequence_number
+            new_object["sequenceNumber"] = @mps[:sequence_number]
+          else
+            new_object = {"groupPackageCount" => 1}
+          end
+
+          # For commented nodes I have checked and compared those nodes in old and new document and didn't find any relatable node. So, I kept them commented. These do not have any impact on our integration as we are not having any relation  with these nodes in our application.
+          if package[:insured_value]
+            # xml.InsuredValue{
+            #   xml.Currency package[:insured_value][:currency]
+            #   xml.Amount package[:insured_value][:amount]
+            # }
+          end
+          new_object["weight"] = {"units" => package[:weight][:units], "value" => package[:weight][:value]}
+          if package[:dimensions]
+            new_object["dimensions"] = {
+              "length" => package[:dimensions][:length],
+              "width" => package[:dimensions][:width],
+              "height" => package[:dimensions][:height],
+              "units" => package[:dimensions][:units]
             }
-            if package[:dimensions]
-              xml.Dimensions{
-                xml.Length package[:dimensions][:length]
-                xml.Width package[:dimensions][:width]
-                xml.Height package[:dimensions][:height]
-                xml.Units package[:dimensions][:units]
+          end
+          new_object = add_customer_references(new_object, package)
+          if package[:special_services_requested]
+            if package[:special_services_requested][:special_service_types]
+              if package[:special_services_requested][:special_service_types].is_a? Array
+                new_object["packageSpecialServices"] = {"specialServiceTypes" => package[:special_services_requested][:special_service_types]}
+              else
+                new_object["packageSpecialServices"] = {"specialServiceTypes" => [package[:special_services_requested][:special_service_types]]}
+              end
+            end
+            # Handle COD Options
+            if package[:special_services_requested][:cod_detail]
+              new_object["packageSpecialServices"]["packageCODDetail"] = {"codCollectionAmount" => {
+                  "amount" => package[:special_services_requested][:cod_detail][:cod_collection_amount][:amount],
+                  "currency" => package[:special_services_requested][:cod_detail][:cod_collection_amount][:currency]
+                }
+              }
+              # For commented nodes I have checked and compared those nodes in old and new document and didn't find any relatable node. So, I kept them commented. These do not have any impact on our integration as we are not having any relation  with these nodes in our application.
+              if package[:special_services_requested][:cod_detail][:add_transportation_charges]
+                # xml.AddTransportationCharges package[:special_services_requested][:cod_detail][:add_transportation_charges]
+              end
+              # xml.CollectionType package[:special_services_requested][:cod_detail][:collection_type]
+              # xml.CodRecipient {
+              #   # add_shipper
+              # }
+              if package[:special_services_requested][:cod_detail][:reference_indicator]
+                # xml.ReferenceIndicator package[:special_services_requested][:cod_detail][:reference_indicator]
+              end
+            end
+            # DangerousGoodsDetail goes here
+            if package[:special_services_requested][:dry_ice_weight]
+              new_object["packageSpecialServices"]["dryIceWeight"] = {
+                "units" => package[:special_services_requested][:dry_ice_weight][:units],
+                "value" => package[:special_services_requested][:dry_ice_weight][:value]
               }
             end
-            add_customer_references(xml, package)
-            if package[:special_services_requested]
-              xml.SpecialServicesRequested{
-                if package[:special_services_requested][:special_service_types]
-                  if package[:special_services_requested][:special_service_types].is_a? Array
-                    package[:special_services_requested][:special_service_types].each do |type|
-                      xml.SpecialServiceTypes type
-                    end
-                  else
-                    xml.SpecialServiceTypes package[:special_services_requested][:special_service_types]
-                  end
-                end
-                # Handle COD Options
-                if package[:special_services_requested][:cod_detail]
-                  xml.CodDetail{
-                    xml.CodCollectionAmount{
-                      xml.Currency package[:special_services_requested][:cod_detail][:cod_collection_amount][:currency]
-                      xml.Amount package[:special_services_requested][:cod_detail][:cod_collection_amount][:amount]
-                    }
-                    if package[:special_services_requested][:cod_detail][:add_transportation_charges]
-                      xml.AddTransportationCharges package[:special_services_requested][:cod_detail][:add_transportation_charges]
-                    end
-                    xml.CollectionType package[:special_services_requested][:cod_detail][:collection_type]
-                    xml.CodRecipient {
-                      add_shipper(xml)
-                    }
-                    if package[:special_services_requested][:cod_detail][:reference_indicator]
-                      xml.ReferenceIndicator package[:special_services_requested][:cod_detail][:reference_indicator]
-                    end
-                  }
-                end
-                # DangerousGoodsDetail goes here
-                if package[:special_services_requested][:dry_ice_weight]
-                  xml.DryIceWeight{
-                    xml.Units package[:special_services_requested][:dry_ice_weight][:units]
-                    xml.Value package[:special_services_requested][:dry_ice_weight][:value]
-                  }
-                end
-                if package[:special_services_requested][:signature_option_detail]
-                  xml.SignatureOptionDetail{
-                    xml.OptionType package[:special_services_requested][:signature_option_detail][:signature_option_type]
-                  }
-                end
-                if package[:special_services_requested][:priority_alert_detail]
-                  xml.PriorityAlertDetail package[:special_services_requested][:priority_alert_detail]
-                end
+            if package[:special_services_requested][:signature_option_detail]
+              new_object["packageSpecialServices"]["signatureOptionType"] = package[:special_services_requested][:signature_option_detail][:signature_option_type]
+            end
+            if package[:special_services_requested][:priority_alert_detail]
+              # xml.PriorityAlertDetail package[:special_services_requested][:priority_alert_detail]
+              new_object["packageSpecialServices"]["priorityAlertDetail"] = {
+                "enhancementTypes": [ package[:special_services_requested][:priority_alert_detail] ],
+                "content": [ "string" ]
               }
             end
-          }
+          end
+          request_body["requestedShipment"]["requestedPackageLineItems"] << new_object
         end
+        return request_body
       end
 
-      def add_customer_references(xml, package)
+      def add_customer_references(package_body, package)
         # customer_refrences is a legacy misspelling
         if refs = package[:customer_references] || package[:customer_refrences]
           refs.each do |ref|
-            xml.CustomerReferences{
-              if ref.is_a?(Hash)
-                # :type can specify custom type:
-                #
-                # BILL_OF_LADING, CUSTOMER_REFERENCE, DEPARTMENT_NUMBER,
-                # ELECTRONIC_PRODUCT_CODE, INTRACOUNTRY_REGULATORY_REFERENCE,
-                # INVOICE_NUMBER, P_O_NUMBER, RMA_ASSOCIATION,
-                # SHIPMENT_INTEGRITY, STORE_NUMBER
-                xml.CustomerReferenceType ref[:type]
-                xml.Value                 ref[:value]
-              else
-                xml.CustomerReferenceType 'CUSTOMER_REFERENCE'
-                xml.Value                 ref
-              end
-            }
+            if ref.is_a?(Hash)
+              # :type can specify custom type:
+              #
+              # BILL_OF_LADING, CUSTOMER_REFERENCE, DEPARTMENT_NUMBER,
+              # ELECTRONIC_PRODUCT_CODE, INTRACOUNTRY_REGULATORY_REFERENCE,
+              # INVOICE_NUMBER, P_O_NUMBER, RMA_ASSOCIATION,
+              # SHIPMENT_INTEGRITY, STORE_NUMBER
+              package_body["customerReferences"] = [{"customerReferenceType" => ref[:type], "value" => ref[:value]}]
+            else
+              package_body["customerReferences"] = [{"customerReferenceType" => 'CUSTOMER_REFERENCE', "value" => ref}]
+            end
           end
         end
+        return package_body
       end
 
       # Add customs clearance(for international shipments)
-      def add_customs_clearance(xml)
-        xml.CustomsClearanceDetail{
-          hash_to_xml(xml, @customs_clearance_detail)
-        }
+      def add_customs_clearance
+        # xml.CustomsClearanceDetail{
+        #   hash_to_xml(xml, @customs_clearance_detail)
+        # }
+        @customs_clearance_detail if @customs_clearance_detail
       end
 
       # Fedex Web Service Api
